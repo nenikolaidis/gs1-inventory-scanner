@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Dict, List, Optional
 
 import database
 from barcode_parser import parse_barcode, ParseResult
@@ -55,6 +55,15 @@ class InventoryApp:
 
     def save_record(self, record: InventoryRecord) -> int:
         return database.insert_record(self.conn, record.to_db_dict())
+    
+    from typing import Any, Dict, List, Optional  # ensure these are imported at top
+
+    def search_records(self, query: str, limit: int = 50) -> List[Dict[str, Any]]:
+        return database.search_records(self.conn, query, limit=limit)
+
+    def get_record(self, record_id: int) -> Optional[Dict[str, Any]]:
+        return database.get_record_by_id(self.conn, record_id)
+
 
     @staticmethod
     def format_parse_for_display(parsed: ParseResult) -> str:

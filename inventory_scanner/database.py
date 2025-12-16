@@ -66,3 +66,56 @@ def list_records(conn: sqlite3.Connection, limit: int = 200) -> List[Dict[str, A
         d["parsed_json"] = json_loads(d.get("parsed_json") or "")
         out.append(d)
     return out
+
+def get_record_by_id(conn: sqlite3.Connection, record_id: int) -> Optional[Dict[str, Any]]:
+    row = conn.execute(
+        "SELECT * FROM inventory_records WHERE id = ?",
+        (record_id,),
+    ).fetchone()
+    if not row:
+        return None
+    d = dict(row)
+    d["parsed_json"] = json_loads(d.get("parsed_json") or "")
+    return d
+
+
+def search_records(conn: sqlite3.Connection, q: str, limit: int = 50) -> List[Dict[str, Any]]:
+    """
+    Simple keyword search across common fields.
+    """
+    q = (q or "").strip()
+    if not q:
+        return list_records(conn, limit=limit)
+
+    like = f"%{q}%"
+    rows = conn.execute(
+        """
+        SELECT * FROM inventory_records
+        WHERE
+            raw_barcode LIKE ?
+            OR sku LIKE ?
+            OR warehouse LIKE ?
+            OR aisle LIKE ?
+            OR position LIKE ?
+            OR shelf LIKE ?
+            OR ai00_sscc LIKE ?
+            OR ai01_gtin LIKE ?
+            OR ai02_content_gtin LIKE ?
+            OR ai10_lot LIKE ?
+            OR ai21_serial LIKE ?
+            OR ai240_additional_id LIKE ?
+            OR ai241_customer_part LIKE ?
+            OR ai37_qty LIKE ?
+            OR ai11_prod_date LIKE ?
+        ORDER BY id DESC
+        LIMIT ?
+        """,
+        (like, like, like, like, like, like, like, like, like, like, like, like, like, like, like, limit),
+    ).fetchall()
+
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        d["parsed_json"] = json_loads(d.get("parsed_json") or "")
+        out.append(d)
+    return out
