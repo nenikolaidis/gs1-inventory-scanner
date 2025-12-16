@@ -1,9 +1,4 @@
 # Inventory_Scanner
-Absolutely 👍
-Below is the **final version exactly as a `README.md` file**.
-You can **copy–paste this directly** into a file named `README.md` in your project root.
-
----
 
 ````markdown
 # Inventory Scanner (GS1)
