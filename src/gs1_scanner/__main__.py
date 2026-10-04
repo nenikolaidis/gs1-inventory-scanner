@@ -1,3 +1,3 @@
-from gs1_scanner.app import main
+from gs1_scanner.cli import main
 
 raise SystemExit(main())

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
@@ -23,6 +24,7 @@ X_DIMENSION = 0.33 * mm  # narrowest bar width
 @dataclass(frozen=True)
 class LabelData:
     elements: Sequence[Element]
+    location: str = ""
     sku: str = ""
     warehouse: str = ""
     aisle: str = ""
@@ -60,11 +62,17 @@ def split_into_symbols(elements: Sequence[Element]) -> list[list[Element]]:
 
 
 def make_label_pdf(label: LabelData, out_path: str | Path) -> Path:
+    out_path = Path(out_path).resolve()
+    out_path.write_bytes(label_pdf_bytes(label))
+    return out_path
+
+
+def label_pdf_bytes(label: LabelData) -> bytes:
     if not label.elements:
         raise ValueError("Nothing to print: the barcode has no GS1 data.")
 
-    out_path = Path(out_path).resolve()
-    c = canvas.Canvas(str(out_path), pagesize=A4)
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
     page_w, page_h = A4
     x0 = 18 * mm
     usable_w = page_w - 2 * x0
@@ -97,6 +105,7 @@ def make_label_pdf(label: LabelData, out_path: str | Path) -> Path:
     y -= 6 * mm
     c.setFont("Helvetica", 10)
     for name, value in [
+        ("Location", label.location),
         ("SKU", label.sku),
         ("Warehouse", label.warehouse),
         ("Aisle", label.aisle),
@@ -121,4 +130,48 @@ def make_label_pdf(label: LabelData, out_path: str | Path) -> Path:
 
     c.showPage()
     c.save()
-    return out_path
+    return buf.getvalue()
+
+
+@dataclass(frozen=True)
+class LocationLabel:
+    code: str
+    description: str = ""
+
+
+# Shelf labels: a 2 x 7 grid on A4, matching common 99.1 x 38.1 mm label sheets.
+SHEET_COLUMNS, SHEET_ROWS = 2, 7
+SHEET_LABEL_W, SHEET_LABEL_H = 99.1 * mm, 38.1 * mm
+SHEET_MARGIN_X, SHEET_MARGIN_Y, SHEET_GAP_X = 4.65 * mm, 15.15 * mm, 2.5 * mm
+
+
+def location_labels_pdf(locations: Sequence[LocationLabel]) -> bytes:
+    """A4 sheets of shelf labels, each with a Code128 barcode of the location code."""
+    if not locations:
+        raise ValueError("No locations to print.")
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    _, page_h = A4
+    per_page = SHEET_COLUMNS * SHEET_ROWS
+    for i, loc in enumerate(locations):
+        if i and i % per_page == 0:
+            c.showPage()
+        row, col = divmod(i % per_page, SHEET_COLUMNS)
+        x = SHEET_MARGIN_X + col * (SHEET_LABEL_W + SHEET_GAP_X)
+        top = page_h - SHEET_MARGIN_Y - row * SHEET_LABEL_H
+        inner_w = SHEET_LABEL_W - 10 * mm
+
+        barcode = Code128(loc.code, barHeight=14 * mm, barWidth=X_DIMENSION)
+        if barcode.width > inner_w:
+            barcode = Code128(
+                loc.code, barHeight=14 * mm, barWidth=X_DIMENSION * inner_w / barcode.width
+            )
+        barcode.drawOn(c, x + (SHEET_LABEL_W - barcode.width) / 2, top - 4 * mm - barcode.height)
+        c.setFont("Helvetica-Bold", 16)
+        c.drawCentredString(x + SHEET_LABEL_W / 2, top - 25 * mm, loc.code)
+        if loc.description:
+            c.setFont("Helvetica", 9)
+            c.drawCentredString(x + SHEET_LABEL_W / 2, top - 31 * mm, loc.description[:60])
+    c.showPage()
+    c.save()
+    return buf.getvalue()

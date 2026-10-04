@@ -1,0 +1,40 @@
+# GS1 Scanner with PostgreSQL.
+#
+#   cp .env.example .env     # then set a real POSTGRES_PASSWORD
+#   docker compose up -d
+#
+# The app is then at http://<this-machine>:8000. Put it behind an HTTPS
+# reverse proxy (Caddy, nginx, Traefik) for anything beyond a trial, and set
+# GS1_SCANNER_SECURE_COOKIES=true in .env when you do.
+
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: gs1
+      POSTGRES_USER: gs1
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U gs1 -d gs1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GS1_SCANNER_DATABASE_URL: postgresql+psycopg://gs1:${POSTGRES_PASSWORD}@db/gs1
+      GS1_SCANNER_SECURE_COOKIES: ${GS1_SCANNER_SECURE_COOKIES:-false}
+      GS1_SCANNER_SKU_PATTERN: ${GS1_SCANNER_SKU_PATTERN:-}
+    ports:
+      - "${GS1_SCANNER_PORT:-8000}:8000"
+
+volumes:
+  db-data:

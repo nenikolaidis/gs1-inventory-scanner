@@ -1,4 +1,4 @@
-"""Where the app keeps its database and generated labels."""
+"""Where the app keeps its data when no database URL is configured."""
 
 from __future__ import annotations
 
@@ -20,11 +20,3 @@ def data_dir() -> Path:
     else:
         base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
     return base / APP_DIR_NAME
-
-
-def default_db_path() -> Path:
-    return data_dir() / "inventory.db"
-
-
-def labels_dir() -> Path:
-    return data_dir() / "labels"
