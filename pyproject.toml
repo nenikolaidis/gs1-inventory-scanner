@@ -4,34 +4,40 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gs1-inventory-scanner"
-version = "0.2.0"
-description = "Desktop app for scanning GS1 barcodes into a local inventory database and printing GS1-128 labels."
+version = "0.3.0"
+description = "Self-hosted web app for scanning GS1 pallet and carton labels, tracking where stock goes, and printing GS1-128 labels."
 readme = "README.md"
-license = "MIT"
+license = "LicenseRef-Proprietary"
 license-files = ["LICENSE.md"]
 authors = [{ name = "Nearchos Nikolaidis" }]
 requires-python = ">=3.10"
 dependencies = [
+    "alembic>=1.13",
     "biip>=5,<6",
+    "fastapi>=0.115",
     "reportlab>=4",
+    "sqlalchemy>=2.0.30",
+    "uvicorn>=0.30",
 ]
 keywords = ["gs1", "gs1-128", "barcode", "inventory", "warehouse", "sscc", "gtin"]
 classifiers = [
     "Development Status :: 4 - Beta",
-    "Environment :: X11 Applications",
-    "Environment :: MacOS X",
-    "Environment :: Win32 (MS Windows)",
-    "Intended Audience :: End Users/Desktop",
+    "Environment :: Web Environment",
+    "Framework :: FastAPI",
+    "Intended Audience :: Manufacturing",
     "Operating System :: OS Independent",
+    "License :: Other/Proprietary License",
+    "Private :: Do Not Upload",
     "Programming Language :: Python :: 3",
     "Topic :: Office/Business",
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6"]
+postgres = ["psycopg[binary]>=3.2"]
+dev = ["httpx>=0.27", "pytest>=8", "ruff>=0.6"]
 
 [project.scripts]
-gs1-scanner = "gs1_scanner.app:main"
+gs1-scanner = "gs1_scanner.cli:main"
 
 [project.urls]
 Repository = "https://github.com/nenikolaidis/gs1-inventory-scanner"
@@ -39,6 +45,8 @@ Issues = "https://github.com/nenikolaidis/gs1-inventory-scanner/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gs1_scanner"]
+# The built web app is git-ignored but must ship in the wheel.
+artifacts = ["src/gs1_scanner/server/static/**"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -46,6 +54,7 @@ testpaths = ["tests"]
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+extend-exclude = ["src/gs1_scanner/server/migrations/versions"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]

@@ -6,7 +6,7 @@ on:
   pull_request:
 
 jobs:
-  test:
+  python:
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -27,3 +27,53 @@ jobs:
       - run: ruff check .
       - run: ruff format --check .
       - run: pytest -v
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: gs1
+          POSTGRES_PASSWORD: gs1
+          POSTGRES_DB: gs1_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U gs1" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://gs1:gs1@localhost:5432/gs1_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -e ".[dev,postgres]"
+      - run: pytest -v tests/server
+
+  web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run build
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build -t gs1-scanner .
+      - name: Start the container and check it serves the app
+        run: |
+          docker run -d --name gs1 -p 8000:8000 gs1-scanner
+          for i in $(seq 30); do curl -sf localhost:8000/api/health && break; sleep 1; done
+          curl -sf localhost:8000/api/health
+          curl -sf localhost:8000/ | grep -q '<div id="root">'
+          docker logs gs1

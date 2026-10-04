@@ -1,0 +1,14 @@
+.git
+.github
+.venv
+venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+web/node_modules
+src/gs1_scanner/server/static
+*.db
+*.db-*
+.env
+.DS_Store

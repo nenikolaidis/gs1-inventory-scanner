@@ -19,3 +19,13 @@ label-*.pdf
 .DS_Store
 .vscode/
 .idea/
+
+# Built web app (produced by `npm run build` in web/)
+src/gs1_scanner/server/static/
+web/node_modules/
+
+# Local deployment settings (contains the database password)
+.env
+
+# Private planning notes (kept out of the repository)
+docs/ROADMAP.md
