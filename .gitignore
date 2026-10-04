@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# App data (the app stores its database in the user data dir, but keep
+# stray local databases and labels out of git)
+*.db
+*.sqlite3
+label-*.pdf
+
+# OS / editors
+.DS_Store
+.vscode/
+.idea/
