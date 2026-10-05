@@ -155,15 +155,71 @@ class ResolveOut(BaseModel):
 
 class ScanIn(BaseModel):
     barcode: str = Field(min_length=1, max_length=500)
+    # receive: add to stock at location_id; pick: take out of stock (location_id
+    # narrows where from); move: from location_id (optional) to to_location_id;
+    # log: record the scan without touching stock.
+    action: Literal["receive", "pick", "move", "log"] = "receive"
     location_id: int | None = None
+    to_location_id: int | None = None
+    # Unique per scan, chosen by the device; repeating it returns the saved scan.
+    client_ref: str | None = Field(default=None, min_length=8, max_length=64)
     sku: str | None = Field(default=None, max_length=64)
     quantity: int | None = None
     note: str = Field(default="", max_length=500)
 
 
+class MovementOut(Orm):
+    id: int
+    created_at: UtcDatetime
+    kind: str
+    scan_id: int | None
+    user: UserRef | None
+    location: LocationOut | None
+    gtin: str
+    lot: str | None
+    expiry_date: date | None
+    sscc: str | None
+    quantity: int
+    note: str
+
+
+class AuditOut(Orm):
+    id: int
+    created_at: UtcDatetime
+    username: str
+    action: str
+    entity_type: str | None
+    entity_id: int | None
+    summary: str
+    details: dict
+
+
+class StockRowOut(BaseModel):
+    location: LocationOut | None
+    gtin: str
+    product: ProductOut | None
+    lot: str | None
+    expiry_date: date | None
+    sscc: str | None
+    quantity: int
+    last_movement_at: UtcDatetime
+
+
+class AdjustIn(BaseModel):
+    location_id: int | None = None
+    gtin: str = Field(min_length=1, max_length=14)
+    lot: str | None = Field(default=None, max_length=20)
+    expiry_date: date | None = None
+    sscc: str | None = Field(default=None, max_length=18)
+    quantity: int = Field(ge=0)
+    note: str = Field(min_length=1, max_length=500)
+
+
 class ScanOut(BaseModel):
     id: int
     created_at: UtcDatetime
+    action: str
+    movements: list[MovementOut]
     user: UserRef | None
     location: LocationOut | None
     product: ProductOut | None
@@ -187,6 +243,8 @@ class ScanOut(BaseModel):
         return cls(
             id=scan.id,
             created_at=scan.created_at,
+            action=scan.action,
+            movements=[MovementOut.model_validate(m) for m in scan.movements],
             user=UserRef.model_validate(scan.user) if scan.user else None,
             location=LocationOut.model_validate(scan.location) if scan.location else None,
             product=ProductOut.model_validate(scan.product) if scan.product else None,

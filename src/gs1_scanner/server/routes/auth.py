@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import time
-from collections import defaultdict, deque
 from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import delete, func, select
 
+from gs1_scanner.server import audit
 from gs1_scanner.server.db import AuthSession, User
 from gs1_scanner.server.deps import DB, SESSION_COOKIE, AppSettings, CurrentUser
 from gs1_scanner.server.schemas import LoginIn, PasswordChangeIn, SetupIn, UserOut
@@ -20,8 +19,9 @@ from gs1_scanner.server.security import (
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
-# Simple in-memory brute-force protection: per username, at most
-# MAX_FAILURES failed logins within FAILURE_WINDOW seconds.
+# Brute-force protection: per username, at most MAX_FAILURES failed logins
+# within FAILURE_WINDOW seconds (counted in the audit log, so it holds across
+# server processes).
 MAX_FAILURES = 10
 FAILURE_WINDOW = 300
 
@@ -79,32 +79,26 @@ def setup(body: SetupIn, db: DB, settings: AppSettings, response: Response) -> U
         role="admin",
     )
     db.add(user)
+    db.flush()
+    audit.record(db, user, "auth.setup", f"Created the first admin account {username}", entity=user)
     _start_session(db, settings, response, user)
     return user
 
 
 @router.post("/login", response_model=UserOut)
-def login(
-    body: LoginIn, request: Request, db: DB, settings: AppSettings, response: Response
-) -> User:
-    username = normalize_username(body.username)
-    state = request.app.state
-    if not hasattr(state, "login_failures"):
-        state.login_failures = defaultdict(deque)
-    failures: deque[float] = state.login_failures[username]
-    now = time.monotonic()
-    while failures and failures[0] < now - FAILURE_WINDOW:
-        failures.popleft()
-    if len(failures) >= MAX_FAILURES:
+def login(body: LoginIn, db: DB, settings: AppSettings, response: Response) -> User:
+    username = normalize_username(body.username)[:64]
+    if audit.recent_login_failures(db, username, FAILURE_WINDOW) >= MAX_FAILURES:
         raise HTTPException(
             status.HTTP_429_TOO_MANY_REQUESTS, "Too many failed logins. Try again in a few minutes."
         )
 
     user = db.scalar(select(User).where(User.username == username))
     if user is None or not user.is_active or not verify_password(body.password, user.password_hash):
-        failures.append(now)
+        audit.record(db, user, "auth.login_failed", "Failed login", username=username)
+        db.commit()
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Wrong username or password.")
-    failures.clear()
+    audit.record(db, user, "auth.login", "Logged in")
     _start_session(db, settings, response, user)
     return user
 
@@ -134,4 +128,5 @@ def change_password(body: PasswordChangeIn, user: CurrentUser, db: DB, request: 
     db.execute(
         delete(AuthSession).where(AuthSession.user_id == user.id, AuthSession.token_hash != current)
     )
+    audit.record(db, user, "auth.password_change", "Changed own password", entity=user)
     db.commit()

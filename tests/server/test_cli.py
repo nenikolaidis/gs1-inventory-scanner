@@ -8,7 +8,14 @@ from sqlalchemy import select
 
 from gs1_scanner.cli import main
 from gs1_scanner.server.config import Settings
-from gs1_scanner.server.db import Location, Product, Scan, make_engine, make_session_factory
+from gs1_scanner.server.db import (
+    Location,
+    Movement,
+    Product,
+    Scan,
+    make_engine,
+    make_session_factory,
+)
 
 
 def make_legacy_db(path: Path) -> None:
@@ -58,6 +65,8 @@ def test_import_legacy(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys) 
         assert scan.created_at.year == 2025
         assert db.scalar(select(Location.code)) == "W1-3-2"
         assert db.scalar(select(Product.gtin)) == "03012345678902"
+        movement = db.scalar(select(Movement))
+        assert (movement.kind, movement.quantity, movement.lot) == ("receive", 5, "LOT1")
 
 
 def test_import_legacy_missing_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

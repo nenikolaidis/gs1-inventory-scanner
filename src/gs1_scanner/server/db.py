@@ -93,6 +93,11 @@ class Scan(Base):
     location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), index=True)
     product_id: Mapped[int | None] = mapped_column(ForeignKey("products.id"), index=True)
 
+    # Set by the device that made the scan, so a retried upload (e.g. from the
+    # offline queue) is recognised instead of saved twice.
+    client_ref: Mapped[str | None] = mapped_column(String(64), unique=True, index=True)
+    # What the scan did to stock: "receive", "pick", "move" or "log" (nothing).
+    action: Mapped[str] = mapped_column(String(16), default="receive", server_default="receive")
     raw_barcode: Mapped[str] = mapped_column(Text)
     gs1_hri: Mapped[str] = mapped_column(Text)
     elements: Mapped[dict[str, Any]] = mapped_column(JSON)  # AI -> value, scan order
@@ -113,6 +118,105 @@ class Scan(Base):
     user: Mapped[User | None] = relationship()
     location: Mapped[Location | None] = relationship()
     product: Mapped[Product | None] = relationship()
+    # Undoing or deleting a scan also undoes its effect on stock.
+    movements: Mapped[list[Movement]] = relationship(
+        back_populates="scan", cascade="all, delete-orphan", order_by="Movement.id"
+    )
+
+
+class Movement(Base):
+    """One signed change to stock at one location.
+
+    Current stock is the sum of movements per location + item, where an item is
+    GTIN + lot + expiry date + SSCC (the pallet). A move is two rows: minus at
+    the source, plus at the destination.
+    """
+
+    __tablename__ = "movements"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, index=True
+    )
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    scan_id: Mapped[int | None] = mapped_column(
+        ForeignKey("scans.id", ondelete="CASCADE"), index=True
+    )
+    kind: Mapped[str] = mapped_column(String(16))  # receive, pick, move, adjust
+    location_id: Mapped[int | None] = mapped_column(ForeignKey("locations.id"), index=True)
+    gtin: Mapped[str] = mapped_column(String(14), index=True)
+    lot: Mapped[str | None] = mapped_column(String(20))
+    expiry_date: Mapped[date | None] = mapped_column(Date)
+    sscc: Mapped[str | None] = mapped_column(String(18), index=True)
+    quantity: Mapped[int] = mapped_column(Integer)  # positive in, negative out
+    note: Mapped[str] = mapped_column(String(500), default="")
+
+    user: Mapped[User | None] = relationship()
+    location: Mapped[Location | None] = relationship()
+    scan: Mapped[Scan | None] = relationship(back_populates="movements")
+
+
+class StockCount(Base):
+    """A physical count of one location, compared with the system's stock."""
+
+    __tablename__ = "stock_counts"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+    location_id: Mapped[int] = mapped_column(ForeignKey("locations.id"), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="open")  # open, applied, cancelled
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"))
+
+    user: Mapped[User | None] = relationship(foreign_keys=[user_id])
+    closed_by: Mapped[User | None] = relationship(foreign_keys=[closed_by_id])
+    location: Mapped[Location] = relationship()
+    lines: Mapped[list[CountLine]] = relationship(
+        back_populates="count", cascade="all, delete-orphan", order_by="CountLine.id"
+    )
+
+
+class CountLine(Base):
+    """How many of one item were counted (scanning the same item again adds to it)."""
+
+    __tablename__ = "count_lines"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    count_id: Mapped[int] = mapped_column(
+        ForeignKey("stock_counts.id", ondelete="CASCADE"), index=True
+    )
+    gtin: Mapped[str] = mapped_column(String(14))
+    lot: Mapped[str | None] = mapped_column(String(20))
+    expiry_date: Mapped[date | None] = mapped_column(Date)
+    sscc: Mapped[str | None] = mapped_column(String(18))
+    quantity: Mapped[int] = mapped_column(Integer)
+    # The system's quantity when the count was applied (None while open).
+    expected: Mapped[int | None] = mapped_column(Integer)
+
+    count: Mapped[StockCount] = relationship(back_populates="lines")
+
+
+class AuditEntry(Base):
+    """Who changed what, for everything that isn't already a scan or movement."""
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utc_now, index=True
+    )
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id"), index=True)
+    # Kept as text too: failed logins have no user, and it reads well in exports.
+    username: Mapped[str] = mapped_column(String(64), default="")
+    action: Mapped[str] = mapped_column(String(32), index=True)  # e.g. "product.update"
+    entity_type: Mapped[str | None] = mapped_column(String(32))
+    entity_id: Mapped[int | None] = mapped_column(Integer)
+    summary: Mapped[str] = mapped_column(String(500), default="")
+    # What changed, as {"field": [old, new]}, or other details.
+    details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+    user: Mapped[User | None] = relationship()
 
 
 def make_engine(database_url: str) -> Engine:
