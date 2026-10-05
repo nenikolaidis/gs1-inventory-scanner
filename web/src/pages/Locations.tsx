@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { api, errorMessage, withParams, type Location } from "../api";
 import { useUser } from "../auth";
+import { useConfig } from "../config";
 import { Empty, Field, Modal, Notice, PageHeader } from "../ui";
 
 type Draft = Pick<Location, "code" | "warehouse" | "aisle" | "position" | "shelf" | "description">;
@@ -16,6 +17,18 @@ export default function Locations() {
   const [checked, setChecked] = useState<Set<number>>(new Set());
   const [editing, setEditing] = useState<Location | "new" | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const config = useConfig();
+
+  async function printOnZebra() {
+    setError("");
+    try {
+      await api.post("/api/locations/print", { ids: [...checked] });
+      setNotice(`Sent ${checked.size} label(s) to the label printer.`);
+    } catch (e) {
+      setError(errorMessage(e));
+    }
+  }
 
   const load = useCallback(async () => {
     try {
@@ -53,8 +66,21 @@ export default function Locations() {
               rel="noreferrer"
               aria-disabled={!checked.size}
             >
-              Print labels{checked.size ? ` (${checked.size})` : ""}
+              A4 labels (PDF){checked.size ? ` (${checked.size})` : ""}
             </a>
+            <a
+              className={`btn ${checked.size ? "" : "disabled"}`}
+              href={checked.size ? labelsUrl.replace("labels.pdf", "labels.zpl") : undefined}
+              download
+              aria-disabled={!checked.size}
+            >
+              Zebra (ZPL)
+            </a>
+            {config?.label_printer && (
+              <button className="btn" disabled={!checked.size} onClick={printOnZebra}>
+                Print on label printer
+              </button>
+            )}
             {isAdmin && (
               <button className="btn primary" onClick={() => setEditing("new")}>
                 Add location
@@ -65,7 +91,8 @@ export default function Locations() {
       />
       <p className="muted">
         Print location labels and stick them on shelves. Scanning one on the scan screen sets the
-        location for the pallets scanned after it. Labels fit A4 sheets of 2 × 7 (99.1 × 38.1 mm).
+        location for the pallets scanned after it. PDF labels fit A4 sheets of 2 × 7 (99.1 × 38.1 mm);
+        Zebra labels are 4 × 2 inch.
       </p>
       <div className="toolbar">
         <input type="search" className="search" placeholder="Search code, warehouse, description…" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search locations" />
@@ -75,6 +102,7 @@ export default function Locations() {
         </label>
       </div>
       {error && <Notice kind="error">{error}</Notice>}
+      {notice && <Notice kind="ok">{notice}</Notice>}
       {locations.length === 0 ? (
         <Empty>No locations yet.</Empty>
       ) : (

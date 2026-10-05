@@ -115,11 +115,23 @@ def test_wrong_check_digit_is_a_warning_not_an_error() -> None:
     assert result.warnings == ("AI (01) value 03012345678901 has a wrong check digit.",)
 
 
-def test_invalid_hri_falls_back_to_values_as_typed() -> None:
+def test_invalid_hri_keeps_the_values_and_flags_them() -> None:
     result = parse_barcode("(01)123(10)X")
     assert result.data == {"01": "123", "10": "X"}
-    assert "Not valid GS1" in result.warnings[0]
-    assert any("(01)" in w and "format" in w for w in result.warnings)
+    assert result.warnings == ("AI (01) value '123' does not match the GS1 format.",)
+
+
+@pytest.mark.parametrize("value", ["A-B", "AB.CD", "A/B", "LOT_1", "SN-1", "A+B%C"])
+def test_hri_keeps_punctuation_in_values(value: str) -> None:
+    # Regression: biip's parse_hri silently truncated these at the punctuation.
+    result = parse_barcode(f"(01)03012345678902(10){value}(21){value}")
+    assert result.data == {"01": "03012345678902", "10": value, "21": value}
+    assert result.warnings == ()
+
+
+def test_separated_input_keeps_punctuation() -> None:
+    result = parse_barcode(f"010301234567890210A-B.C/D{GS}21SN-1")
+    assert result.data == {"01": "03012345678902", "10": "A-B.C/D", "21": "SN-1"}
 
 
 def test_plain_ean13_is_stored_as_gtin() -> None:

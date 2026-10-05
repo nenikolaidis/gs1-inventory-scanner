@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import mimetypes
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -14,7 +15,14 @@ from gs1_scanner import __version__
 from gs1_scanner.server import migrate
 from gs1_scanner.server.config import Settings
 from gs1_scanner.server.db import make_engine, make_session_factory
-from gs1_scanner.server.routes import auth, catalog, scans, users
+from gs1_scanner.server.deps import CurrentUser
+from gs1_scanner.server.routes import audit as audit_routes
+from gs1_scanner.server.routes import auth, catalog, counts, scans, users
+from gs1_scanner.server.routes import stock as stock_routes
+
+# Older Pythons don't know these, and browsers need them to be right.
+mimetypes.add_type("application/wasm", ".wasm")
+mimetypes.add_type("application/manifest+json", ".webmanifest")
 
 # The built web app (see web/), copied here by the build.
 STATIC_DIR = Path(__file__).parent / "static"
@@ -55,7 +63,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok", "version": __version__}
 
-    for module in (auth, users, scans, catalog):
+    @app.get("/api/config", tags=["meta"])
+    def client_config(_user: CurrentUser) -> dict[str, object]:
+        """Settings the web app needs to know about."""
+        return {
+            "version": __version__,
+            "expiry_warning_days": settings.expiry_warning_days,
+            "label_printer": bool(settings.zebra_printer),
+            "label_dpi": settings.label_dpi,
+            "label_size": settings.label_size,
+        }
+
+    for module in (auth, users, scans, catalog, stock_routes, counts, audit_routes):
         app.include_router(module.router)
 
     if (STATIC_DIR / "index.html").exists():
@@ -73,6 +92,8 @@ def _serve_web_app(app: FastAPI) -> None:
             return JSONResponse({"detail": "Not Found"}, status_code=404)
         file = (STATIC_DIR / path).resolve()
         if path and file.is_file() and file.is_relative_to(STATIC_DIR.resolve()):
-            return FileResponse(file)
+            # The service worker must always be fresh, or app updates never arrive.
+            headers = {"Cache-Control": "no-cache"} if path == "sw.js" else None
+            return FileResponse(file, headers=headers)
         # Client-side routes (/scan, /history, ...) all load the app shell.
         return FileResponse(index, headers={"Cache-Control": "no-cache"})

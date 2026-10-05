@@ -22,7 +22,7 @@ def test_products_crud(admin: TestClient) -> None:
 
 
 def test_product_with_scans_cannot_be_deleted(admin: TestClient) -> None:
-    admin.post("/api/scans", json={"barcode": "(01)03012345678902", "sku": "ABC12"})
+    admin.post("/api/scans", json={"barcode": "(01)03012345678902", "sku": "ABC12", "quantity": 5})
     product = admin.get("/api/products").json()[0]
     assert admin.delete(f"/api/products/{product['id']}").status_code == 409
 

@@ -2,8 +2,8 @@
 
 Input forms, and who parses them:
 
-* Human-readable, ``(01)0301...(10)LOT1``: biip, with a lenient fallback
-  for text that breaks GS1 rules so the user can still see what was typed.
+* Human-readable, ``(01)0301...(10)LOT1``: split here, each field checked
+  against biip's GS1 format rules (invalid values are kept and flagged).
 * Raw with FNC1/GS separators (``\\x1d``), optionally prefixed with a
   symbology identifier like ``]C1``: biip.
 * Raw without separators (what most keyboard-wedge scanners produce):
@@ -76,16 +76,15 @@ def parse_barcode(text: str) -> ParseResult:
 
 
 def _parse_hri(s: str) -> ParseResult:
-    try:
-        message = GS1Message.parse_hri(s)
-    except ParseError as e:
-        elements = _split_hri_leniently(s)
-        warnings = [f"Not valid GS1 ({e}). Showing the values as typed."]
-        return _finish(elements, warnings)
-    return _finish([Element(es.ai.ai, es.value) for es in message.element_strings])
+    # Not biip's GS1Message.parse_hri: it only keeps \w characters, so it
+    # silently truncates valid values like lot "A-B" or serial "SN.1".
+    elements = _split_hri(s)
+    if not elements:
+        return ParseResult((), ("Could not parse barcode: no (AI) found.",))
+    return _finish(elements)
 
 
-def _split_hri_leniently(s: str) -> list[Element]:
+def _split_hri(s: str) -> list[Element]:
     # re.split with a capture group gives [prefix, ai, value, ai, value, ...]
     parts = _HRI_AI.split(s)
     return [Element(ai, value) for ai, value in zip(parts[1::2], parts[2::2], strict=True)]

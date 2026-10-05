@@ -48,9 +48,62 @@ export interface Resolved {
   product: Product | null;
 }
 
+export type Action = "receive" | "pick" | "move" | "log";
+
+export interface Movement {
+  id: number;
+  created_at: string;
+  kind: "receive" | "pick" | "move" | "adjust";
+  scan_id: number | null;
+  user: { id: number; display_name: string } | null;
+  location: Location | null;
+  gtin: string;
+  lot: string | null;
+  expiry_date: string | null;
+  sscc: string | null;
+  quantity: number;
+  note: string;
+}
+
+export interface StockRow {
+  location: Location | null;
+  gtin: string;
+  product: Product | null;
+  lot: string | null;
+  expiry_date: string | null;
+  sscc: string | null;
+  quantity: number;
+  last_movement_at: string;
+}
+
+export interface CountRow {
+  gtin: string;
+  product: Product | null;
+  lot: string | null;
+  expiry_date: string | null;
+  sscc: string | null;
+  expected: number;
+  counted: number;
+  difference: number;
+  line_id: number | null;
+}
+
+export interface StockCount {
+  id: number;
+  created_at: string;
+  status: "open" | "applied" | "cancelled";
+  location: Location;
+  user: { id: number; display_name: string } | null;
+  closed_at: string | null;
+  closed_by: { id: number; display_name: string } | null;
+  rows?: CountRow[];
+}
+
 export interface Scan {
   id: number;
   created_at: string;
+  action: Action;
+  movements: Movement[];
   user: { id: number; display_name: string } | null;
   location: Location | null;
   product: Product | null;

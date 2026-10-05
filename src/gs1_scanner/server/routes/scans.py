@@ -12,7 +12,9 @@ from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import selectinload
 
 from gs1_scanner.gs1 import Element
-from gs1_scanner.labels import LabelData, label_pdf_bytes
+from gs1_scanner.labels import LabelData, label_pdf_bytes, label_zpl
+from gs1_scanner.server import audit, printing, stock
+from gs1_scanner.server.config import Settings
 from gs1_scanner.server.db import Location, Scan
 from gs1_scanner.server.deps import DB, AppSettings, CurrentUser, as_utc
 from gs1_scanner.server.scanning import ScanError, create_scan, parse_to_json, resolve
@@ -45,7 +47,17 @@ def resolve_scan(body: ResolveIn, _user: CurrentUser, db: DB) -> ResolveOut:
 
 
 @router.post("/scans", response_model=ScanOut, status_code=status.HTTP_201_CREATED)
-def save_scan(body: ScanIn, user: CurrentUser, db: DB, settings: AppSettings) -> ScanOut:
+def save_scan(
+    body: ScanIn, user: CurrentUser, db: DB, settings: AppSettings, response: Response
+) -> ScanOut:
+    """Save a scan and apply it to stock (receive, pick, move), all or nothing."""
+    if body.client_ref:
+        existing = db.scalar(select(Scan).where(Scan.client_ref == body.client_ref))
+        if existing is not None:
+            if existing.user_id != user.id:
+                raise HTTPException(status.HTTP_409_CONFLICT, "Duplicate scan reference.")
+            response.status_code = status.HTTP_200_OK  # already saved earlier
+            return ScanOut.from_scan(existing)
     try:
         scan = create_scan(
             db,
@@ -57,7 +69,25 @@ def save_scan(body: ScanIn, user: CurrentUser, db: DB, settings: AppSettings) ->
             quantity=body.quantity,
             note=body.note,
         )
+        scan.client_ref = body.client_ref
+        to_location = None
+        if body.to_location_id is not None:
+            to_location = db.get(Location, body.to_location_id)
+            if to_location is None or not to_location.is_active:
+                raise ScanError("Unknown or inactive destination location.")
+        stock.apply_scan(
+            db,
+            scan,
+            action=body.action,
+            user=user,
+            location=scan.location,
+            to_location=to_location,
+            # An explicit quantity wins; otherwise AI (37) from the label, if any.
+            quantity=body.quantity if body.quantity is not None else scan.quantity,
+            expiry_warning_days=settings.expiry_warning_days,
+        )
     except ScanError as e:
+        db.rollback()
         raise HTTPException(422, str(e)) from e
     db.commit()
     return ScanOut.from_scan(scan)
@@ -103,7 +133,10 @@ def list_scans(
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
     scans = db.scalars(
         stmt.options(
-            selectinload(Scan.user), selectinload(Scan.location), selectinload(Scan.product)
+            selectinload(Scan.user),
+            selectinload(Scan.location),
+            selectinload(Scan.product),
+            selectinload(Scan.movements),
         )
         .order_by(Scan.id.desc())
         .limit(limit)
@@ -230,27 +263,89 @@ def delete_scan(scan_id: int, user: CurrentUser, db: DB) -> None:
                 "Only admins can delete this scan. You can undo your own scans "
                 f"for {UNDO_WINDOW.seconds // 60} minutes.",
             )
+    stock_effect = ", ".join(
+        f"{m.quantity:+d} at {m.location.code if m.location else 'no location'}"
+        for m in scan.movements
+    )
+    audit.record(
+        db,
+        user,
+        "scan.delete",
+        f"Deleted scan #{scan.id} ({scan.action} {scan.gs1_hri})"
+        + (f", reverting {stock_effect}" if stock_effect else ""),
+        entity=scan,
+        details={
+            "action": scan.action,
+            "gs1_hri": scan.gs1_hri,
+            "quantity": scan.quantity,
+            "scanned_by": scan.user.username if scan.user else None,
+            "scanned_at": as_utc(scan.created_at).isoformat(),
+            "movements": [
+                [m.location.code if m.location else None, m.quantity] for m in scan.movements
+            ],
+        },
+    )
     db.delete(scan)
     db.commit()
+
+
+def _label_data(scan: Scan) -> LabelData:
+    loc = scan.location
+    return LabelData(
+        elements=[Element(ai, value) for ai, value in scan.elements.items()],
+        location=loc.code if loc else "",
+        sku=scan.sku or "",
+        warehouse=loc.warehouse if loc else "",
+        aisle=loc.aisle if loc else "",
+        position=loc.position if loc else "",
+        shelf=loc.shelf if loc else "",
+    )
+
+
+def _scan_zpl(scan: Scan, settings: Settings) -> str:
+    title = " ".join(x for x in [scan.sku, scan.product.name if scan.product else None] if x)
+    return label_zpl(
+        _label_data(scan),
+        title=title or (f"SSCC {scan.sscc}" if scan.sscc else "GS1 label"),
+        dpi=settings.label_dpi,
+        size=settings.label_size,
+    )
 
 
 @router.get("/scans/{scan_id}/label.pdf")
 def scan_label(scan_id: int, _user: CurrentUser, db: DB) -> Response:
     scan = _get_scan(db, scan_id)
-    loc = scan.location
-    pdf = label_pdf_bytes(
-        LabelData(
-            elements=[Element(ai, value) for ai, value in scan.elements.items()],
-            location=loc.code if loc else "",
-            sku=scan.sku or "",
-            warehouse=loc.warehouse if loc else "",
-            aisle=loc.aisle if loc else "",
-            position=loc.position if loc else "",
-            shelf=loc.shelf if loc else "",
-        )
-    )
     return Response(
-        pdf,
+        label_pdf_bytes(_label_data(scan)),
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="scan-{scan.id}.pdf"'},
     )
+
+
+@router.get("/scans/{scan_id}/label.zpl")
+def scan_label_zpl(scan_id: int, _user: CurrentUser, db: DB, settings: AppSettings) -> Response:
+    """The label as ZPL, for Zebra thermal printers."""
+    scan = _get_scan(db, scan_id)
+    return Response(
+        _scan_zpl(scan, settings),
+        media_type="text/plain; charset=utf-8",
+        headers={"Content-Disposition": f'attachment; filename="scan-{scan.id}.zpl"'},
+    )
+
+
+@router.post("/scans/{scan_id}/print", status_code=status.HTTP_204_NO_CONTENT)
+def print_scan_label(scan_id: int, _user: CurrentUser, db: DB, settings: AppSettings) -> None:
+    """Print the label on the configured network label printer."""
+    send_to_printer(settings, _scan_zpl(_get_scan(db, scan_id), settings))
+
+
+def send_to_printer(settings: Settings, zpl: str) -> None:
+    if not settings.zebra_printer:
+        raise HTTPException(
+            status.HTTP_409_CONFLICT,
+            "No label printer is set up (GS1_SCANNER_ZEBRA_PRINTER).",
+        )
+    try:
+        printing.send_raw(settings.zebra_printer, zpl.encode("utf-8"))
+    except printing.PrintError as e:
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(e)) from e

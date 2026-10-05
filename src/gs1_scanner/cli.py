@@ -106,6 +106,7 @@ LEGACY_NOTE = "Imported from desktop app, record #{}"
 
 
 def cmd_import_legacy(args: argparse.Namespace) -> int:
+    from gs1_scanner.server import stock
     from gs1_scanner.server.db import Location, Scan
     from gs1_scanner.server.scanning import LOCATION_CODE_RE, ScanError, create_scan
 
@@ -152,6 +153,17 @@ def cmd_import_legacy(args: argparse.Namespace) -> int:
                     location_id=location_id,
                     sku=row["sku"],
                     note=note,
+                )
+                # Records with an item and a quantity become stock; the rest are logged.
+                in_stock = scan.gtin and scan.quantity and scan.quantity > 0
+                stock.apply_scan(
+                    db,
+                    scan,
+                    action="receive" if in_stock else "log",
+                    user=None,
+                    location=scan.location,
+                    to_location=None,
+                    quantity=scan.quantity,
                 )
             except ScanError as e:
                 print(f"Record #{row['id']}: skipped ({e})", file=sys.stderr)

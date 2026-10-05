@@ -1,6 +1,6 @@
 # Proprietary License
 
-Copyright © 2026 Nearchos Nikolaidis. All rights reserved.
+Copyright © 2026 [Nearchos Nikolaidis](https://github.com/nenikolaidis). All rights reserved.
 
 This software, including its source code, documentation and all associated
 files (the "Software"), is the exclusive property of Nearchos Nikolaidis.

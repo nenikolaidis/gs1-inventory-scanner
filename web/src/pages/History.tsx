@@ -2,9 +2,18 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 
 import { api, errorMessage, withParams, type Location, type Page, type Scan } from "../api";
 import { useUser } from "../auth";
+import { useConfig } from "../config";
 import { Empty, Modal, Notice, PageHeader, formatDate, formatDateTime } from "../ui";
+import { describe } from "./Scan";
 
 const PAGE_SIZE = 50;
+
+const ACTION_LABEL: Record<Scan["action"], string> = {
+  receive: "Received",
+  pick: "Picked",
+  move: "Moved",
+  log: "Logged",
+};
 
 interface Filters {
   q: string;
@@ -104,6 +113,7 @@ export default function History() {
             <thead>
               <tr>
                 <th>When</th>
+                <th>Action</th>
                 <th>Location</th>
                 <th>SKU</th>
                 <th>GTIN / SSCC</th>
@@ -120,6 +130,7 @@ export default function History() {
                     {formatDateTime(s.created_at)}
                     {s.warnings.length > 0 && <span title="Has warnings"> ⚠</span>}
                   </td>
+                  <td data-label="Action">{ACTION_LABEL[s.action]}</td>
                   <td data-label="Location">{s.location?.code ?? "—"}</td>
                   <td data-label="SKU">{s.sku ?? "—"}</td>
                   <td data-label="GTIN / SSCC" className="mono">{s.gtin ?? s.sscc ?? "—"}</td>
@@ -155,7 +166,23 @@ export default function History() {
 
 function ScanDetails({ scan, onClose, onDeleted }: { scan: Scan; onClose: () => void; onDeleted: () => void }) {
   const user = useUser();
+  const config = useConfig();
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const [printing, setPrinting] = useState(false);
+
+  async function printLabel() {
+    setPrinting(true);
+    setError("");
+    try {
+      await api.post(`/api/scans/${scan.id}/print`);
+      setNotice("Sent to the label printer.");
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setPrinting(false);
+    }
+  }
 
   async function remove() {
     if (!window.confirm(`Delete scan #${scan.id}? This can't be undone.`)) return;
@@ -168,6 +195,7 @@ function ScanDetails({ scan, onClose, onDeleted }: { scan: Scan; onClose: () => 
   }
 
   const rows: [string, string | number | null | undefined][] = [
+    ["What happened", describe(scan)],
     ["Scanned", formatDateTime(scan.created_at)],
     ["By", scan.user?.display_name],
     ["Location", scan.location?.code],
@@ -193,12 +221,21 @@ function ScanDetails({ scan, onClose, onDeleted }: { scan: Scan; onClose: () => 
             </button>
           )}
           <a className="btn" href={`/api/scans/${scan.id}/label.pdf`} target="_blank" rel="noreferrer">
-            Print label
+            PDF label
           </a>
+          <a className="btn" href={`/api/scans/${scan.id}/label.zpl`} download>
+            Zebra (ZPL)
+          </a>
+          {config?.label_printer && (
+            <button className="btn primary" onClick={printLabel} disabled={printing}>
+              {printing ? "Printing…" : "Print on label printer"}
+            </button>
+          )}
         </>
       }
     >
       {error && <Notice kind="error">{error}</Notice>}
+      {notice && <Notice kind="ok">{notice}</Notice>}
       {scan.warnings.length > 0 && (
         <ul className="warnings">
           {scan.warnings.map((w) => (

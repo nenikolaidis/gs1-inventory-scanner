@@ -43,8 +43,10 @@ def encode_gs1_128(elements: Sequence[Element]) -> str:
     return "".join(out)
 
 
-def split_into_symbols(elements: Sequence[Element]) -> list[list[Element]]:
-    """Group elements into as few symbols as possible, each within the GS1 length limit.
+def split_into_symbols(
+    elements: Sequence[Element], max_chars: int = MAX_SYMBOL_CHARS
+) -> list[list[Element]]:
+    """Group elements into as few symbols as possible, each within ``max_chars``.
 
     Element order is kept. An element that alone exceeds the limit gets its own symbol.
     """
@@ -52,7 +54,7 @@ def split_into_symbols(elements: Sequence[Element]) -> list[list[Element]]:
     current: list[Element] = []
     for e in elements:
         candidate = [*current, e]
-        if current and len(encode_gs1_128(candidate)) - 1 > MAX_SYMBOL_CHARS:
+        if current and len(encode_gs1_128(candidate)) - 1 > max_chars:
             symbols.append(current)
             candidate = [e]
         current = candidate
@@ -175,3 +177,145 @@ def location_labels_pdf(locations: Sequence[LocationLabel]) -> bytes:
     c.showPage()
     c.save()
     return buf.getvalue()
+
+
+# --- Zebra (ZPL) labels for thermal printers ---
+#
+# Code128 symbols are encoded here (by ReportLab, as for the PDFs) and sent to
+# the printer in ZPL's "no mode" with explicit subset switches and FNC1, so the
+# printer draws exactly the symbol we computed instead of choosing its own.
+
+_ZPL_START = {103: ">9", 104: ">:", 105: ">;"}  # start code A, B, C
+_ZPL_SWITCH = {99: ("C", ">5"), 100: ("B", ">6"), 101: ("A", ">7")}
+_ZPL_FNC1 = ">8"
+
+
+def _zpl_escape(ch: str) -> str:
+    # Field data uses ^FH with "_" as the hex escape; ">" starts invocation codes.
+    if ch in "^~_":
+        return f"_{ord(ch):02X}"
+    return ">0" if ch == ">" else ch
+
+
+def code128_zpl_data(value: str) -> tuple[str, int]:
+    """ZPL field data for a Code128 symbol and its width in modules.
+
+    ``value`` uses ReportLab's notation (FNC1 as "\\xf1").
+    """
+    symbol = Code128(value)
+    symbol.validate()
+    symbol.encode()
+    codes = symbol.encoded[:-2]  # the printer adds the check digit and stop code
+    modules = len(symbol.encoded) * 11 + 2  # stop code is 13 modules wide
+
+    out = [_ZPL_START[codes[0]]]
+    subset = {103: "A", 104: "B", 105: "C"}[codes[0]]
+    for code in codes[1:]:
+        if code == 102:
+            out.append(_ZPL_FNC1)
+        elif subset == "C" and code < 100:
+            out.append(f"{code:02d}")
+        elif code in _ZPL_SWITCH and not (subset == "B" and code == 100):
+            subset, invocation = _ZPL_SWITCH[code]
+            out.append(invocation)
+        elif code < 64 or (subset == "B" and code < 96):
+            out.append(_zpl_escape(chr(code + 32)))
+        else:
+            raise ValueError(f"Unsupported Code128 symbol value {code} in {value!r}")
+    return "".join(out), modules
+
+
+LABEL_SIZES_MM = {"4x6": (101.6, 152.4), "100x150": (100.0, 150.0)}
+MIN_MODULE_DOTS = 2  # narrowest bar: 0.25 mm at 203 dpi, 0.17 mm at 300 dpi
+LOCATION_LABEL_MM = (101.6, 50.8)  # 4 x 2 inch
+
+
+class _Zpl:
+    def __init__(self, dpi: int):
+        self.dpi = dpi
+        self.parts: list[str] = []
+
+    def dots(self, mm_: float) -> int:
+        return round(mm_ / 25.4 * self.dpi)
+
+    def text(self, x_mm: float, y_mm: float, height_mm: float, text: str) -> None:
+        h = self.dots(height_mm)
+        safe = "".join(_zpl_escape(c) if c in "^~_" else c for c in text)
+        self.parts.append(f"^FO{self.dots(x_mm)},{self.dots(y_mm)}^A0N,{h},{h}^FH_^FD{safe}^FS")
+
+    def barcode(
+        self, x_mm: float, y_mm: float, value: str, height_mm: float, max_width_mm: float
+    ) -> float:
+        """Draw a Code128 symbol; returns its width in mm."""
+        data, modules = code128_zpl_data(value)
+        # Widest bars that fit; at least 1 dot. 2-3 dots ≈ 0.25-0.38 mm.
+        module = max(1, min(4, self.dots(max_width_mm) // modules))
+        self.parts.append(
+            f"^BY{module}^FO{self.dots(x_mm)},{self.dots(y_mm)}"
+            f"^BCN,{self.dots(height_mm)},N,N,N^FH_^FD{data}^FS"
+        )
+        return modules * module / self.dpi * 25.4
+
+    def label(self, width_mm: float, height_mm: float) -> str:
+        return (
+            f"^XA^CI28^PW{self.dots(width_mm)}^LL{self.dots(height_mm)}"
+            + "".join(self.parts)
+            + "^XZ\n"
+        )
+
+
+def label_zpl(label: LabelData, *, title: str = "", dpi: int = 203, size: str = "4x6") -> str:
+    """A 4x6" (or 100x150 mm) logistics label with GS1-128 barcodes, as ZPL."""
+    if not label.elements:
+        raise ValueError("Nothing to print: the barcode has no GS1 data.")
+    width, height = LABEL_SIZES_MM[size]
+    z = _Zpl(dpi)
+    margin = 5.0
+    y = margin
+    z.text(margin, y, 9, title or label.sku or "GS1 label")
+    y += 12
+    if label.location:
+        z.text(margin, y, 6, f"Location: {label.location}")
+        y += 8
+    for e in label.elements:
+        z.text(margin, y, 4.5, f"({e.ai}) {e.title}: {e.value}"[:60])
+        y += 6
+    y += 3
+    # Barcodes from the bottom up, as on standard logistics labels. Use as
+    # few symbols as possible while keeping bars at least MIN_MODULE_DOTS wide.
+    usable = z.dots(width - 2 * margin)
+    for max_chars in (MAX_SYMBOL_CHARS, 40, 32, 24, 16, 1):
+        symbols = split_into_symbols(label.elements, max_chars)
+        widest = max(code128_zpl_data(encode_gs1_128(sym))[1] for sym in symbols)
+        if usable // widest >= MIN_MODULE_DOTS:
+            break
+    bar_h, hri_h, gap = 22.0, 4.0, 4.0
+    bottom = height - margin
+    for symbol in reversed(symbols):
+        bottom -= hri_h
+        z.text(margin, bottom, hri_h - 0.5, "".join(e.hri for e in symbol)[:70])
+        bottom -= bar_h + 1
+        z.barcode(margin, bottom, encode_gs1_128(symbol), bar_h, width - 2 * margin)
+        bottom -= gap
+    if bottom < y:
+        raise ValueError("Too much data for one label.")
+    return z.label(width, height)
+
+
+def location_labels_zpl(locations: Sequence[LocationLabel], *, dpi: int = 203) -> str:
+    """One 4x2" shelf label per location, as ZPL."""
+    if not locations:
+        raise ValueError("No locations to print.")
+    width, height = LOCATION_LABEL_MM
+    labels = []
+    for loc in locations:
+        z = _Zpl(dpi)
+        data_width = z.barcode(0, 0, loc.code, 0, width - 10)  # measure only
+        z.parts.clear()
+        x = (width - data_width) / 2
+        z.barcode(x, 4, loc.code, 22, width - 10)
+        z.text(5, 30, 11, loc.code)
+        if loc.description:
+            z.text(5, 43, 4.5, loc.description[:50])
+        labels.append(z.label(width, height))
+    return "".join(labels)
