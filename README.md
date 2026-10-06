@@ -12,7 +12,103 @@ recorded with who made it. It works with hardware scanners or a phone camera,
 keeps working in Wi-Fi dead spots, and prints to A4 or Zebra label printers.
 It runs on the company's own server, so the data stays with the company.
 
+<p align="center">
+  <img src="docs/screenshots/stock.png" alt="The Stock page: current stock per location, lot and expiry date, with a warning about expired and soon-expiring stock" width="900">
+</p>
+
+**Interested in using GS1 Scanner in your warehouse?** It's available for
+licensing — [get in touch](https://github.com/nenikolaidis).
+
 © 2026 Nearchos Nikolaidis. All rights reserved. See [LICENSE.md](LICENSE.md).
+
+---
+
+## How to use it
+
+The screenshots below use made-up products, with GS1's example company
+prefix 0614141.
+
+### 1. Set up shelves and products
+
+An admin adds the warehouse's locations and prints a barcode label for each
+shelf (A4 label sheets or a Zebra printer). Products link a GTIN to your own
+SKU; they are also learned automatically the first time someone types a SKU
+for a new barcode.
+
+<p align="center">
+  <img src="docs/screenshots/locations.png" alt="The Locations page with shelf codes and buttons to print their labels" width="800">
+</p>
+
+### 2. Scan on the warehouse floor
+
+Operators use the **Scan** screen on a handheld scanner, phone or tablet. They
+pick a mode, then scan: a shelf label sets the location, a pallet or carton
+label records what happens to it. Clean scans save instantly with a beep;
+anything that needs checking, like a missing quantity, a warning or an
+ambiguous barcode, waits for the operator.
+
+<table>
+  <tr>
+    <td align="center" width="33%"><img src="docs/screenshots/scan-receive.png" alt="Receiving: the scanned label's GS1 fields, with the SKU filled in and the quantity entered" width="260"></td>
+    <td align="center" width="33%"><img src="docs/screenshots/scan-move.png" alt="Moving a pallet: scanned by its SSCC, waiting for the destination shelf" width="260"></td>
+    <td align="center" width="33%"><img src="docs/screenshots/scan-find-dark.png" alt="Find, in dark mode: where a product is, by lot and expiry date" width="260"></td>
+  </tr>
+  <tr>
+    <td><b>Receive.</b> Scan the shelf, then each pallet. The app reads GTIN, lot,
+    expiry and quantity, and asks only for what's missing.</td>
+    <td><b>Move.</b> Scan a pallet (its SSCC is enough), then the shelf it goes
+    to.</td>
+    <td><b>Find.</b> Scan a product to see where it is, or a shelf to see
+    what's on it. Light and dark mode follow the device.</td>
+  </tr>
+</table>
+
+**Pick** works like Receive in reverse and always takes the stock that expires
+first. **Count** is described below. Without a hardware scanner, the 📷 button
+scans with the phone's camera. Without Wi-Fi, scans are kept on the device and
+uploaded when the connection is back.
+
+### 3. Check stock and expiry dates
+
+**Stock** shows what is where, per lot, expiry date and pallet, and warns about
+expired and soon-expiring stock (top of this page). Opening a line shows its
+full history, and admins can correct the quantity, with a reason.
+
+<p align="center">
+  <img src="docs/screenshots/stock-detail.png" alt="A stock line's details: its history of receipts, moves, picks and corrections, and a form to correct the quantity" width="800">
+</p>
+
+### 4. Count a shelf
+
+In **Count** mode an operator scans a shelf, then everything on it. The review
+compares what was counted with what the system expected; an admin applies it,
+which corrects the stock.
+
+<p align="center">
+  <img src="docs/screenshots/count-review.png" alt="A stock count under review: expected 48, counted 46, difference -2" width="800">
+</p>
+
+### 5. Print labels
+
+Any scan can be printed as a GS1-128 label: as a PDF, or on a Zebra thermal
+printer (4×6" or 100×150 mm), directly over the network.
+
+<p align="center">
+  <img src="docs/screenshots/zebra-label.png" alt="A 4x6 inch Zebra pallet label with the SKU, product, location, GS1 fields and two GS1-128 barcodes" width="320">
+</p>
+
+### 6. Look back
+
+**History** lists every scan, with filters and CSV export. **Activity** shows
+every change to products, locations, users and stock corrections, and every
+login, with what changed and who did it.
+
+<p align="center">
+  <img src="docs/screenshots/history.png" alt="Scan history: received, moved and picked pallets with who scanned them" width="800">
+</p>
+<p align="center">
+  <img src="docs/screenshots/activity.png" alt="The activity log, with a stock correction showing the quantity changed from 42 to 40" width="800">
+</p>
 
 ---
 
@@ -264,7 +360,7 @@ The scan screen is designed so an operator never has to touch the keyboard:
 
 ### 10. Quality
 
-- **150 automated tests** covering the parser (including every bug found
+- **151 automated tests** covering the parser (including every bug found
   in the original version), stock rules, counts, permissions, the activity
   log, labels and ZPL, printing, offline retries, CSV export, data import and
   database migrations.

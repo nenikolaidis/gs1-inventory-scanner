@@ -303,10 +303,10 @@ def _label_data(scan: Scan) -> LabelData:
 
 
 def _scan_zpl(scan: Scan, settings: Settings) -> str:
-    title = " ".join(x for x in [scan.sku, scan.product.name if scan.product else None] if x)
     return label_zpl(
         _label_data(scan),
-        title=title or (f"SSCC {scan.sscc}" if scan.sscc else "GS1 label"),
+        title=scan.sku or (f"SSCC {scan.sscc}" if scan.sscc else "GS1 label"),
+        subtitle=scan.product.name if scan.product else "",
         dpi=settings.label_dpi,
         size=settings.label_size,
     )
