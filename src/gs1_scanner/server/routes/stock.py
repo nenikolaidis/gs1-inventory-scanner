@@ -179,9 +179,14 @@ def adjust_stock(body: AdjustIn, admin: AdminUser, db: DB) -> Movement | None:
         raise HTTPException(422, str(e)) from e
     if movement is not None:
         where = location.code if body.location_id is not None else "no location"
+        product = db.scalar(select(Product).where(Product.gtin == body.gtin))
         item = " ".join(
             x
-            for x in [body.gtin, body.lot and f"lot {body.lot}", body.sscc and f"SSCC {body.sscc}"]
+            for x in [
+                product.sku if product else body.gtin,
+                body.lot and f"lot {body.lot}",
+                body.sscc and f"SSCC {body.sscc}",
+            ]
             if x
         )
         audit.record(

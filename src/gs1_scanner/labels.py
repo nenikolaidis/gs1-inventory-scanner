@@ -230,16 +230,31 @@ MIN_MODULE_DOTS = 2  # narrowest bar: 0.25 mm at 203 dpi, 0.17 mm at 300 dpi
 LOCATION_LABEL_MM = (101.6, 50.8)  # 4 x 2 inch
 
 
+# Font 0 is proportional; a character averages about half its height in width.
+# A little more is allowed so text is never clipped at the label's edge.
+_CHAR_WIDTH = 0.55
+_MARGIN_MM = 5.0
+
+
+def fit_text(text: str, height_mm: float, max_width_mm: float) -> str:
+    """Shorten ``text`` (ending in "...") so it fits ``max_width_mm`` at this font size."""
+    max_chars = int(max_width_mm / (height_mm * _CHAR_WIDTH))
+    return text if len(text) <= max_chars else text[: max(max_chars - 3, 1)].rstrip() + "..."
+
+
 class _Zpl:
-    def __init__(self, dpi: int):
+    def __init__(self, dpi: int, width_mm: float):
         self.dpi = dpi
+        self.width_mm = width_mm
         self.parts: list[str] = []
 
     def dots(self, mm_: float) -> int:
         return round(mm_ / 25.4 * self.dpi)
 
     def text(self, x_mm: float, y_mm: float, height_mm: float, text: str) -> None:
+        """Draw one line of text, shortened if needed to stay on the label."""
         h = self.dots(height_mm)
+        text = fit_text(text, height_mm, self.width_mm - x_mm - _MARGIN_MM)
         safe = "".join(_zpl_escape(c) if c in "^~_" else c for c in text)
         self.parts.append(f"^FO{self.dots(x_mm)},{self.dots(y_mm)}^A0N,{h},{h}^FH_^FD{safe}^FS")
 
@@ -264,16 +279,24 @@ class _Zpl:
         )
 
 
-def label_zpl(label: LabelData, *, title: str = "", dpi: int = 203, size: str = "4x6") -> str:
-    """A 4x6" (or 100x150 mm) logistics label with GS1-128 barcodes, as ZPL."""
+def label_zpl(
+    label: LabelData, *, title: str = "", subtitle: str = "", dpi: int = 203, size: str = "4x6"
+) -> str:
+    """A 4x6" (or 100x150 mm) logistics label with GS1-128 barcodes, as ZPL.
+
+    ``title`` is printed large (e.g. the SKU), ``subtitle`` below it (e.g. the product name).
+    """
     if not label.elements:
         raise ValueError("Nothing to print: the barcode has no GS1 data.")
     width, height = LABEL_SIZES_MM[size]
-    z = _Zpl(dpi)
-    margin = 5.0
+    z = _Zpl(dpi, width)
+    margin = _MARGIN_MM
     y = margin
     z.text(margin, y, 9, title or label.sku or "GS1 label")
     y += 12
+    if subtitle:
+        z.text(margin, y, 6, subtitle)
+        y += 8
     if label.location:
         z.text(margin, y, 6, f"Location: {label.location}")
         y += 8
@@ -293,7 +316,10 @@ def label_zpl(label: LabelData, *, title: str = "", dpi: int = 203, size: str = 
     bottom = height - margin
     for symbol in reversed(symbols):
         bottom -= hri_h
-        z.text(margin, bottom, hri_h - 0.5, "".join(e.hri for e in symbol)[:70])
+        # The human-readable line must be complete, so shrink it to fit rather than cut it.
+        hri = "".join(e.hri for e in symbol)
+        hri_size = min(hri_h - 0.5, (width - 2 * margin) / (len(hri) * _CHAR_WIDTH))
+        z.text(margin, bottom + (hri_h - 0.5 - hri_size), hri_size, hri)
         bottom -= bar_h + 1
         z.barcode(margin, bottom, encode_gs1_128(symbol), bar_h, width - 2 * margin)
         bottom -= gap
@@ -309,7 +335,7 @@ def location_labels_zpl(locations: Sequence[LocationLabel], *, dpi: int = 203) -
     width, height = LOCATION_LABEL_MM
     labels = []
     for loc in locations:
-        z = _Zpl(dpi)
+        z = _Zpl(dpi, width)
         data_width = z.barcode(0, 0, loc.code, 0, width - 10)  # measure only
         z.parts.clear()
         x = (width - data_width) / 2

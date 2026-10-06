@@ -56,6 +56,21 @@ def test_label_zpl_sizes_and_resolutions() -> None:
     assert "^PW799^LL1199" in label_zpl(LabelData(elements), size="100x150")
 
 
+def test_zpl_text_never_runs_off_the_label() -> None:
+    long_lot = "LOT-" + "X" * 16
+    zpl = label_zpl(
+        LabelData(parse_barcode(f"(01)03012345678902(10){long_lot}").elements),
+        title="RICE-1KG",
+        subtitle="Basmati rice, extra long grain, 1 kg bag x 10 per carton",
+    )
+    for height_dots, text in re.findall(r"\^A0N,(\d+),\d+\^FH_\^FD([^^]*)\^FS", zpl):
+        width_mm = len(text) * int(height_dots) / 8 * 0.55  # 8 dots per mm at 203 dpi
+        assert width_mm <= 101.6 - 10, text
+    assert "^FDBasmati rice, extra long" in zpl and "...^FS" in zpl
+    # The line under each barcode is never shortened: it's shrunk to fit instead.
+    assert f"^FD(10){long_lot}^FS" in zpl
+
+
 def test_location_labels_zpl() -> None:
     zpl = location_labels_zpl([LocationLabel("A1", "Dock"), LocationLabel("B-2")])
     assert zpl.count("^XA") == 2
